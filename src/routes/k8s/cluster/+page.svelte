@@ -62,6 +62,7 @@
 	import Server from '@lucide/svelte/icons/server';
 	import type { Component } from 'svelte';
 	import { onDestroy, tick, untrack } from 'svelte';
+	import { SvelteSet } from 'svelte/reactivity';
 
 	const context = $derived(page.url.searchParams.get('context') ?? '');
 	const view = $derived(clusterView(context));
@@ -138,7 +139,16 @@
 	});
 
 	// --- loading ---------------------------------------------------------------------------
-	// Every list stays live: after loading, the cluster's changes are applied as they happen.
+	// The tab on screen loads first and shows at once; the other kinds then load one at a time
+	// in the background, so the sidebar counts fill in without holding up what is shown. Opening
+	// a tab that has not loaded yet starts it straight away. Every list stays live: after
+	// loading, the cluster's changes are applied as they happen.
+
+	/** Kinds loaded, or loading, for this context and these namespaces. */
+	const started = new SvelteSet<Kind>();
+	/** Kinds still to load in the background, in order. */
+	let queue: Kind[] = [];
+	let pumping = false;
 
 	let attempt = 0;
 	async function connectTo(ctx: string, fresh: boolean) {
@@ -155,28 +165,77 @@
 	const scopeKey = $derived([...selected].sort().join('\n'));
 	let loadedScope: string | null = null;
 
-	/** Loads every namespaced kind for the ticked namespaces (all when none). */
-	function loadScoped() {
-		loadedScope = scopeKey;
+	/** Loads one namespaced kind for the ticked namespaces (all when none). */
+	function loadNamespaced(kind: NamespacedKind) {
 		const namespaces = selected.size ? [...selected] : null;
 		const inScope = new Set(namespaces);
 		const keep = namespaces ? (item: { namespace: string }) => inScope.has(item.namespace) : undefined;
-		for (const kind of NAMESPACED) {
-			// Every namespaced summary has `namespace`; TS cannot see that through the union.
-			const list = lists[kind] as unknown as ResourceList<NamespacedKinds[typeof kind]>;
-			list.load((sink) => streamKind(kind, context, namespaces, sink), keep);
+		// Every namespaced summary has `namespace`; TS cannot see that through the union.
+		const list = lists[kind] as unknown as ResourceList<NamespacedKinds[typeof kind]>;
+		return list.load((sink) => streamKind(kind, context, namespaces, sink), keep);
+	}
+
+	/** Starts loading a kind; resolves when its first full list is in (it stays live after). */
+	function startKind(kind: Kind): Promise<void> {
+		started.add(kind);
+		switch (kind) {
+			case 'namespaces':
+				return lists.namespaces.load((sink) => streamNamespaces(context, sink));
+			case 'nodes':
+				refreshUsage();
+				return lists.nodes.load((sink) => streamNodes(context, sink));
+			case 'custom':
+				return loadCustom();
+			default:
+				return loadNamespaced(kind);
 		}
-		if (view.custom?.namespaced) loadCustom();
+	}
+
+	/** Loads `kind` now if it has not started, without waiting for the background queue. */
+	function ensure(kind: Kind) {
+		if (kind === 'custom' && !view.custom) return;
+		if (!started.has(kind)) startKind(kind);
+	}
+
+	/** Loads every kind not loaded yet, one after another; then discovers the cluster's kinds. */
+	async function fillInBackground() {
+		queue = TABS.filter((k) => !started.has(k) && (k !== 'custom' || view.custom));
+		if (pumping) return;
+		pumping = true;
+		try {
+			for (let kind = queue.shift(); kind; kind = queue.shift()) {
+				if (!started.has(kind)) await startKind(kind);
+			}
+		} finally {
+			pumping = false;
+		}
+		// Only for `:` suggestions, and it asks every API group: last, unless `:` asks first.
+		if (!discovered.length && !discovering) discover(context);
+	}
+
+	/** Shows the tab on screen first, then fills in the rest. */
+	function loadVisibleFirst() {
+		const first = view.tab === 'custom' && !view.custom ? 'namespaces' : view.tab;
+		const loading = started.has(first) ? Promise.resolve() : startKind(first);
+		loading.finally(fillInBackground);
+	}
+
+	/** The ticked namespaces changed: namespaced kinds load again, the one on screen first. */
+	function rescope() {
+		loadedScope = scopeKey;
+		for (const kind of NAMESPACED) started.delete(kind);
+		if (view.custom?.namespaced) started.delete('custom');
+		loadVisibleFirst();
 	}
 
 	/** Loads the kind in the `custom` tab, scoped like the other tabs when it is namespaced. */
-	function loadCustom() {
+	function loadCustom(): Promise<void> {
 		const kind = view.custom;
-		if (!kind) return;
+		if (!kind) return Promise.resolve();
 		const namespaces = kind.namespaced && selected.size ? [...selected] : null;
 		const inScope = new Set(namespaces);
 		const keep = namespaces ? (row: TableRow) => inScope.has(row.namespace ?? '') : undefined;
-		lists.custom.load(
+		return lists.custom.load(
 			(sink) =>
 				streamTable(
 					context,
@@ -209,19 +268,18 @@
 			view.cursors.custom = 0;
 			customColumns = [];
 			lists.custom.reset();
-			loadCustom();
+			startKind('custom');
 		}
 		view.tab = 'custom';
 	}
 
-	/** Connect and list everything at once; the lists share the one connection. */
+	/** Connects, shows the tab on screen, then loads the rest; all share the one connection. */
 	function loadAll(fresh = false) {
 		connectTo(context, fresh);
-		lists.namespaces.load((sink) => streamNamespaces(context, sink));
-		lists.nodes.load((sink) => streamNodes(context, sink));
-		loadScoped();
-		if (view.custom && !view.custom.namespaced) loadCustom();
-		refreshUsage();
+		loadedScope = scopeKey;
+		started.clear();
+		queue = [];
+		loadVisibleFirst();
 	}
 
 	async function discover(ctx: string) {
@@ -253,8 +311,8 @@
 			for (const list of Object.values(lists)) list.reset();
 			customColumns = [];
 			usage = null;
+			discovered = [];
 			loadAll();
-			discover(context);
 		});
 	});
 
@@ -267,8 +325,14 @@
 	$effect(() => {
 		const key = scopeKey;
 		if (loadedScope === null || key === loadedScope) return;
-		const timer = setTimeout(() => untrack(loadScoped), 200);
+		const timer = setTimeout(() => untrack(rescope), 200);
 		return () => clearTimeout(timer);
+	});
+
+	// A tab that has not loaded yet loads as soon as it is opened.
+	$effect(() => {
+		const tab = view.tab;
+		untrack(() => ensure(tab));
 	});
 
 	// metrics-server has no watch; poll it while node usage is on screen.
@@ -285,7 +349,7 @@
 	// which would lose the cursor remembered from the last visit).
 	$effect(() => {
 		for (const kind of TABS) {
-			if (lists[kind].loading) continue;
+			if (lists[kind].loading || !started.has(kind)) continue;
 			const fixed = clamp(view.cursors[kind], rows[kind].length);
 			if (fixed !== view.cursors[kind]) view.cursors[kind] = fixed;
 		}
@@ -466,6 +530,8 @@
 		switch (event.key) {
 			case ':':
 				commandOpen = true;
+				// Suggestions need the cluster's kinds; ask now rather than after the queue.
+				if (!discovered.length && !discovering) discover(context);
 				return true;
 			case '[':
 				stepTab(-1);
@@ -610,9 +676,12 @@
 </script>
 
 {#snippet count(kind: Kind)}
-	<span class="text-muted-foreground tabular-nums">
-		{lists[kind].loading && lists[kind].items.length === 0 ? '…' : lists[kind].items.length}
-	</span>
+	<!-- Blank until the kind has started loading (it is queued). -->
+	{#if started.has(kind)}
+		<span class="text-muted-foreground tabular-nums">
+			{lists[kind].loading && lists[kind].items.length === 0 ? '…' : lists[kind].items.length}
+		</span>
+	{/if}
 {/snippet}
 
 {#snippet sideItem(kind: Kind, label: string, shortcut: string)}

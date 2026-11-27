@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import logo from '#lib/assets/favicon.svg';
 	import Kbd from '#lib/components/Kbd.svelte';
 	import { matches } from '#lib/k8s/format.js';
 	import { isTyping, plain, useKeys } from '#lib/keys.svelte.js';
@@ -141,7 +142,9 @@
 
 <main class="mx-auto flex h-screen max-w-5xl flex-col overflow-y-auto px-4 py-5 sm:px-8 sm:py-6" bind:this={grid}>
 	<div class="flex items-center gap-4">
-		<h1 class="text-2xl font-semibold tracking-tight">winter</h1>
+		<h1 class="flex items-center gap-2 text-2xl font-semibold tracking-tight">
+			<img src={logo} alt="" class="-m-1 size-9" />winter
+		</h1>
 		<div class="relative ml-auto w-full max-w-72">
 			<Search class="text-muted-foreground absolute top-1/2 left-2.5 size-4 -translate-y-1/2" />
 			<input

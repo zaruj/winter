@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- winter's app icon: the top of an iceberg on a soft dark blue. Source for `npx tauri icon`. -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#34598f"/>
+      <stop offset="1" stop-color="#1d3a63"/>
+    </linearGradient>
+    <linearGradient id="ice" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef5fc"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS icon grid: an 824 px rounded square centred on the 1024 px canvas. -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#sky)"/>
+
+  <!-- The iceberg, cut flat at the waterline: only what shows above the water. -->
+  <path d="M232 700 L338 528 L392 556 L476 322 L566 470 L616 432 L722 566 L792 700 Z" fill="url(#ice)"/>
+  <!-- Shaded faces, away from the light. -->
+  <path d="M476 322 L566 470 L588 700 L486 700 L512 494 Z" fill="#cfe1f3"/>
+  <path d="M616 432 L722 566 L792 700 L676 700 L664 556 Z" fill="#cfe1f3"/>
+  <path d="M338 528 L392 556 L372 700 L300 700 L352 590 Z" fill="#dde9f6"/>
+</svg>
