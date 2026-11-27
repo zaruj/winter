@@ -4,7 +4,9 @@
 
 pub mod aws;
 mod error;
+pub mod github;
 pub mod k8s;
+pub mod state;
 pub mod terminal;
 pub mod terminal_profile;
 pub mod tls;

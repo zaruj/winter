@@ -344,3 +344,34 @@ export async function streamTable(
 	};
 	await Promise.all(!namespaces || !kind.namespaced ? [list(null)] : namespaces.map(list));
 }
+
+export interface ObjectEvent {
+	/** `Normal` or `Warning`. */
+	type: string;
+	reason: string;
+	message: string;
+	count: number;
+	/** When it last happened (RFC 3339). */
+	last: string | null;
+	source: string | null;
+}
+
+export interface ObjectView {
+	/** The object as the API returns it, without managedFields; Secret values hidden unless revealed. */
+	object: Record<string, any>;
+	yaml: string;
+	events: ObjectEvent[];
+	/** Why events could not be read; the object itself was. */
+	eventsError: string | null;
+}
+
+/** One object of any kind with its YAML and events (`kubectl get -o yaml` + describe's events). */
+export function getObject(
+	context: string,
+	kind: ResourceKind,
+	namespace: string | null,
+	name: string,
+	reveal = false
+): Promise<ObjectView> {
+	return invoke('k8s_object', { context, kind, namespace, name, reveal });
+}

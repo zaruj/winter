@@ -39,10 +39,11 @@
 	import UsageBar from '#lib/k8s/UsageBar.svelte';
 	import NodeDetails from '#lib/k8s/NodeDetails.svelte';
 	import LogDock from '#lib/k8s/LogDock.svelte';
+	import ObjectPanel from '#lib/k8s/ObjectPanel.svelte';
 	import { openLogs, openShell } from '#lib/k8s/pod-actions.js';
 	import { clusterView, GROUPS, KINDS, NAMESPACED, TABS, type Kind } from '#lib/k8s/view.svelte.js';
 	import CommandBar from '#lib/k8s/CommandBar.svelte';
-	import { builtinTab, withBuiltins } from '#lib/k8s/command.js';
+	import { builtinTab, withBuiltins, BUILTIN } from '#lib/k8s/command.js';
 	import { clamp, isTyping, moveCursor, plain, scrollToSelected, useKeys } from '#lib/keys.svelte.js';
 	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
 	import LoaderCircle from '@lucide/svelte/icons/loader-circle';
@@ -82,6 +83,10 @@
 	/** Node details are open beside the Nodes tab, and take the keys. */
 	const detailsOpen = $derived(view.tab === 'nodes' && view.node !== null);
 	let commandOpen = $state(false);
+	let panel: ObjectPanel | undefined = $state();
+	/** The list and the panel share the width; too narrow for both, the panel takes it all. */
+	let bodyWidth = $state(0);
+	const panelAlone = $derived(view.panel !== null && bodyWidth < 760);
 	let discovered = $state<ResourceKind[]>([]);
 	let discovering = $state(false);
 	const kinds = $derived(withBuiltins(discovered));
@@ -344,6 +349,21 @@
 		return view.tab === kind ? rows[kind][view.cursors[kind]] : undefined;
 	}
 
+	/** The kind shown in the current tab, as the API names it. */
+	const tabKind = $derived(
+		view.tab === 'custom' ? view.custom : (BUILTIN.find((b) => b.tab === view.tab)?.kind ?? null)
+	);
+	/** The selected row of the current tab: what the details / YAML panel shows. */
+	const selectedItem = $derived.by(() => {
+		const row = rows[view.tab][view.cursors[view.tab]] as { name: string; namespace?: string | null } | undefined;
+		return row ? { name: row.name, namespace: row.namespace ?? null } : null;
+	});
+
+	/** `d` / `y`: open that view, switch to it, or close it if it is already shown. */
+	function togglePanel(mode: 'detail' | 'yaml') {
+		view.panel = view.panel === mode ? null : mode;
+	}
+
 	// --- keys ------------------------------------------------------------------------------
 
 	useKeys((event) => {
@@ -398,6 +418,24 @@
 			return;
 		}
 		if (!inFilter && detailsOpen && details?.handleKey(event)) return true;
+		if (!inFilter && view.panel && plain(event)) {
+			if (event.key === 'Escape') {
+				view.panel = null;
+				return true;
+			}
+			if (event.key === 'J' || event.key === 'PageDown') {
+				panel?.scrollBy(1);
+				return true;
+			}
+			if (event.key === 'K' || event.key === 'PageUp') {
+				panel?.scrollBy(-1);
+				return true;
+			}
+			if (event.key === 'x' && tabKind?.kind === 'Secret' && !tabKind.group) {
+				view.reveal = !view.reveal;
+				return true;
+			}
+		}
 		if (!inFilter && plain(event) && event.key === 'L' && dock.tabs.length) {
 			// Show the logs and focus them (L again, from the logs, hides them).
 			dock.visible = true;
@@ -446,6 +484,14 @@
 				else if (node) openNode(node);
 				else if (pod) openLogs(context, pod);
 				return !!(ns || node || pod);
+			case 'd':
+				if (!tabKind) return;
+				togglePanel('detail');
+				return true;
+			case 'y':
+				if (!tabKind) return;
+				togglePanel('yaml');
+				return true;
 			case 'l':
 				if (pod) openLogs(context, pod);
 				return !!pod;
@@ -457,6 +503,7 @@
 				return true;
 			case 'r':
 				loadAll(connection.state === 'failed');
+				panel?.load();
 				return true;
 		}
 	});
@@ -730,7 +777,11 @@
 					<Input class="h-8 pl-8" placeholder="Filter  /" bind:value={query} bind:ref={filter} />
 				</div>
 			</div>
-			<div class="relative min-h-0 flex-1 px-2 sm:px-4 {detailsOpen ? 'overflow-hidden pb-2' : 'overflow-auto pb-4'}" bind:this={scroller}>
+			<div class="flex min-h-0 flex-1" bind:clientWidth={bodyWidth}>
+			<div
+				class="relative min-h-0 min-w-0 flex-1 px-2 sm:px-4 {detailsOpen ? 'overflow-hidden pb-2' : 'overflow-auto'} {panelAlone ? 'hidden' : ''}"
+				bind:this={scroller}
+			>
 				{#if commandOpen}
 					<CommandBar
 						{kinds}
@@ -808,13 +859,30 @@
 					{/if}
 				</Tabs.Content>
 			</div>
+			{#if view.panel && tabKind}
+				<div class="bg-card m-2 ml-0 min-h-0 min-w-0 rounded-lg border {panelAlone ? 'ml-2 flex-1' : 'w-[45%] max-w-[52rem] min-w-80'}">
+					<ObjectPanel
+						bind:this={panel}
+						{context}
+						kind={tabKind}
+						namespace={tabKind.namespaced ? (selectedItem?.namespace ?? null) : null}
+						name={selectedItem?.name ?? null}
+						bind:mode={() => view.panel ?? 'detail', (m) => (view.panel = m)}
+						bind:reveal={() => view.reveal, (r) => (view.reveal = r)}
+						{now}
+						onClose={() => (view.panel = null)}
+					/>
+				</div>
+			{/if}
+			</div>
+			<!-- Under the list only, so the sidebar keeps its full height. -->
+			{#if dock.tabs.length}
+				<div class={dock.visible ? 'contents' : 'hidden'}>
+					<LogDock bind:this={logDock} {context} {dock} />
+				</div>
+			{/if}
 			</div>
 		</Tabs.Root>
-		{#if dock.tabs.length}
-			<div class={dock.visible ? 'contents' : 'hidden'}>
-				<LogDock bind:this={logDock} {context} {dock} />
-			</div>
-		{/if}
 		<footer class="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 border-t px-2 py-2 text-xs sm:px-4">
 			{#if !detailsOpen}<span class="hidden sm:inline"><Kbd>j</Kbd> <Kbd>k</Kbd> move</span>{/if}
 			<span><Kbd>:</Kbd> resources</span>
@@ -823,6 +891,8 @@
 				<span><Kbd>Space</Kbd> tick</span>
 				<span><Kbd>Enter</Kbd> open</span>
 			{/if}
+			<span><Kbd>d</Kbd> details</span>
+			<span><Kbd>y</Kbd> YAML</span>
 			{#if view.tab === 'pods'}
 				<span><Kbd>l</Kbd> logs</span>
 				<span><Kbd>s</Kbd> shell</span>

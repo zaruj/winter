@@ -19,6 +19,8 @@
 				[['k'], 'Kubernetes'],
 				[['t'], 'Terminal'],
 				[['a'], 'AWS'],
+				[['g'], 'GitHub Actions'],
+				[['/'], 'Search services, Enter opens the first'],
 				[['←', '↑', '→', '↓'], 'Move, then Enter']
 			]
 		},
@@ -41,6 +43,10 @@
 				[['[', ']'], 'Previous / next in the sidebar'],
 				[['Space'], 'Tick namespace'],
 				[['Enter'], 'Open namespace, node details, pod logs'],
+				[['d'], 'Details of the selected item, beside the list (as kubectl describe)'],
+				[['y'], 'YAML of the selected item, beside the list'],
+				[['J', 'K'], 'Scroll the details / YAML (Esc closes)'],
+				[['x'], 'Show / hide Secret values in that panel'],
 				[['0'], 'All namespaces'],
 				[['l'], 'Pod logs (opens below)'],
 				[['L'], 'Show and focus / hide logs and shells'],
@@ -86,10 +92,23 @@
 			keys: [
 				[['type'], 'Search profiles, then Enter'],
 				[[':'], 'Service or region (e.g. :eks, :alb us-east-1, :ap-southeast-1)'],
-				[['1–3'], 'EC2, EKS, load balancers'],
-				[['Enter'], 'EC2 instance details (Esc back)'],
+				[['1–9'], 'Services in sidebar order (Route 53 and Cost via : or [ ])'],
+				[['d'], 'Details of the selected resource, beside the list (Enter opens too)'],
+				[['J', 'K'], 'Scroll the details (Esc closes)'],
 				[['[', ']'], 'Previous / next service'],
 				[['j', 'k'], 'Move'],
+				[['/'], 'Filter'],
+				[['r'], 'Refresh (on Cost overview: only the cost, which AWS bills)']
+			]
+		},
+		{
+			title: 'GitHub',
+			keys: [
+				[['type'], 'Search repositories, or owner/name, then Enter'],
+				[['[', ']'], 'Previous / next workflow'],
+				[['Enter'], 'Run: jobs and steps; on a job: its log'],
+				[['j', 'k'], 'Move'],
+				[['o'], 'Open on GitHub'],
 				[['/'], 'Filter'],
 				[['r'], 'Refresh']
 			]

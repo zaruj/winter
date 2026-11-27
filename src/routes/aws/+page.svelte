@@ -8,10 +8,10 @@
 	import { FALLBACK_REGION, listProfiles, type ProfileInfo } from '#lib/aws/api.js';
 	import { matches } from '#lib/k8s/format.js';
 	import { clamp, moveCursor, scrollToSelected, useKeys } from '#lib/keys.svelte.js';
-	import ArrowLeft from '@lucide/svelte/icons/arrow-left';
-	import ChevronRight from '@lucide/svelte/icons/chevron-right';
+	import ListPage from '#lib/components/ListPage.svelte';
+	import ListRow from '#lib/components/ListRow.svelte';
+	import { age } from '#lib/k8s/format.js';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
-	import Search from '@lucide/svelte/icons/search';
 	import Cloud from '@lucide/svelte/icons/cloud';
 	import { onMount, tick } from 'svelte';
 
@@ -19,15 +19,17 @@
 	let error = $state<string | null>(null);
 	let query = $state('');
 	let cursor = $state(0);
-	let search: HTMLInputElement;
-	let list: HTMLElement;
+	let search: HTMLInputElement | undefined = $state();
+	let list: HTMLElement | undefined = $state();
+	let now = $state(Date.now());
 
 	const shown = $derived(
 		(contexts ?? []).filter((c) => matches(query, c.name, c.region, c.auth))
 	);
 
+	/** Opens in the region last used for the profile, else its configured one. */
 	const href = (c: ProfileInfo) =>
-		`/aws/account?${new URLSearchParams({ profile: c.name, region: c.region ?? FALLBACK_REGION })}`;
+		`/aws/account?${new URLSearchParams({ profile: c.name, region: c.lastRegion ?? c.region ?? FALLBACK_REGION })}`;
 
 	const AUTH: Record<string, string> = {
 		keys: 'access keys',
@@ -59,8 +61,10 @@
 	}
 
 	onMount(() => {
-		search.focus();
+		search?.focus();
 		load();
+		const timer = setInterval(() => (now = Date.now()), 30_000);
+		return () => clearInterval(timer);
 	});
 
 	// Typing goes straight to the search box; arrows / Ctrl+J/K move, Enter opens.
@@ -80,46 +84,34 @@
 		}
 		// Any printable key typed elsewhere on the page goes to the search box.
 		if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && document.activeElement !== search) {
-			search.focus();
+			search?.focus();
 		}
 	});
 </script>
 
-<main class="mx-auto max-w-3xl p-8">
-	<header class="flex items-center gap-3">
-		<Button variant="ghost" size="icon" href="/" aria-label="Back"><ArrowLeft /></Button>
-		<h1 class="flex-1 text-xl font-semibold tracking-tight">AWS profiles</h1>
-		<Button variant="outline" size="icon" onclick={load} aria-label="Reload AWS config">
+<ListPage
+	title="AWS profiles"
+	bind:query
+	bind:search
+	onQuery={() => (cursor = 0)}
+	placeholder="Search profiles, then Enter"
+>
+	{#snippet actions()}
+		<Button variant="outline" size="icon" onclick={load} aria-label="Reload AWS config" title="Reload ~/.aws">
 			<RefreshCw />
 		</Button>
-	</header>
-
-	<div class="relative mt-6">
-		<Search class="text-muted-foreground absolute top-1/2 left-3 size-4 -translate-y-1/2" />
-		<input
-			bind:this={search}
-			value={query}
-			oninput={(e) => setQuery(e.currentTarget.value)}
-			placeholder="Search profiles, then Enter"
-			aria-label="Search profiles"
-			spellcheck="false"
-			autocomplete="off"
-			class="border-input focus-visible:border-ring focus-visible:ring-ring/50 h-10 w-full rounded-lg border bg-transparent pr-3 pl-9 text-sm outline-none focus-visible:ring-3"
-		/>
-	</div>
-
-	{#if error}
-		<Alert.Root variant="destructive" class="mt-6">
-			<Alert.Title>Could not read AWS config</Alert.Title>
-			<Alert.Description>{error}</Alert.Description>
-		</Alert.Root>
-	{/if}
-
-	<ul class="mt-4 grid gap-2" bind:this={list}>
+	{/snippet}
+	{#snippet notice()}
+		{#if error}
+			<Alert.Root variant="destructive">
+				<Alert.Title>Could not read AWS config</Alert.Title>
+				<Alert.Description>{error}</Alert.Description>
+			</Alert.Root>
+		{/if}
+	{/snippet}
+	<ul class="grid gap-0.5" bind:this={list}>
 		{#if contexts === null}
-			{#each { length: 3 } as _, i (i)}
-				<li><Skeleton class="h-16 w-full rounded-xl" /></li>
-			{/each}
+			{#each { length: 4 } as _, i (i)}<li><Skeleton class="h-10 w-full rounded-lg" /></li>{/each}
 		{:else if contexts.length === 0 && !error}
 			<li class="text-muted-foreground py-12 text-center text-sm">
 				No profiles in <code>~/.aws/config</code> or <code>~/.aws/credentials</code>. Run <code>aws configure</code> to add one.
@@ -128,27 +120,33 @@
 			<li class="text-muted-foreground py-12 text-center text-sm">No profile matches “{query}”.</li>
 		{/if}
 		{#each shown as c, i (c.name)}
-			{@const selected = i === clamp(cursor, shown.length)}
 			<li>
-				<a
+				<ListRow
 					href={href(c)}
-					data-selected={selected || undefined}
-					onmouseenter={() => (cursor = i)}
-					class="bg-card hover:border-foreground/30 data-selected:border-foreground/40 data-selected:bg-muted/50 flex items-center gap-4 rounded-xl border p-4 transition-colors outline-none"
+					selected={i === clamp(cursor, shown.length)}
+					onhover={() => (cursor = i)}
+					icon={Cloud}
+					name={c.name}
+					details={[
+						c.lastRegion ?? c.region ?? `no region (uses ${FALLBACK_REGION})`,
+						AUTH[c.auth] ?? c.auth
+					].join(' · ')}
 				>
-					<Cloud class="text-muted-foreground size-5 shrink-0" />
-					<div class="min-w-0 flex-1">
-						<div class="flex items-center gap-2">
-							<span class="truncate font-medium">{c.name}</span>
-							{#if c.current}<Badge variant="secondary">current</Badge>{/if}
-						</div>
-						<div class="text-muted-foreground truncate text-xs">
-							{c.region ?? `no region (uses ${FALLBACK_REGION})`} · {AUTH[c.auth] ?? c.auth}
-						</div>
-					</div>
-					{#if selected}<Kbd>Enter</Kbd>{:else}<ChevronRight class="text-muted-foreground size-4 shrink-0" />{/if}
-				</a>
+					{#snippet badges()}
+						{#if c.current}<Badge variant="secondary">current</Badge>{/if}
+						{#if c.lastUsed}
+							<Badge variant="outline" class="text-muted-foreground">{age(new Date(c.lastUsed).toISOString(), now)} ago</Badge>
+						{/if}
+					{/snippet}
+				</ListRow>
 			</li>
 		{/each}
 	</ul>
-</main>
+	{#snippet hints()}
+		<span>type to search</span>
+		<span><Kbd>↑</Kbd> <Kbd>↓</Kbd> move</span>
+		<span><Kbd>Enter</Kbd> open</span>
+		<span class="hidden sm:inline">recently used first</span>
+		<span class="ml-auto">{contexts?.length ?? 0} profiles · <Kbd>?</Kbd> help</span>
+	{/snippet}
+</ListPage>

@@ -9,14 +9,16 @@ use serde::Serialize;
 use tauri::State;
 use tauri::ipc::{Channel, InvokeResponseBody};
 use winter_core::aws::{
-    Aws, Ec2Instance, Ec2InstanceDetail, EksCluster, Identity, LoadBalancer, ProfileInfo,
+    Aws, Bucket, CostOverview, DbInstance, EbsVolume, Ec2Instance, EksCluster, HostedZone,
+    Identity, LoadBalancer, MskCluster, ProfileInfo, Section, SecurityGroup, Vpc,
 };
+use winter_core::github::{Account, GitHub, Job, Repo, Run, RunsPage, Workflow};
 use winter_core::k8s::{
     Change, ClusterInfo, Clusters, ConfigMap, ConfigMapSummary, ContextInfo, Deployment,
     DeploymentSummary, Ingress, IngressSummary, LogRequest, Namespace, NamespaceSummary, Node,
-    NodeDetail, NodeSummary, NodeUsage, Object, PersistentVolumeClaim, Pod, PodSummary, PvcSummary,
-    ResourceKind, Secret, SecretSummary, Service, ServiceSummary, ShellRequest, StreamId,
-    TablePage, TableRow,
+    NodeDetail, NodeSummary, NodeUsage, Object, ObjectView, PersistentVolumeClaim, Pod, PodSummary,
+    PvcSummary, ResourceKind, Secret, SecretSummary, Service, ServiceSummary, ShellRequest,
+    StreamId, TablePage, TableRow,
 };
 use winter_core::terminal::{SessionId, ShellCommand, Size, Terminals};
 use winter_core::terminal_profile::TerminalProfile;
@@ -181,6 +183,21 @@ pub async fn k8s_resource_kinds(
     Ok(clusters.resource_kinds(&context).await?)
 }
 
+/// One object of any kind, its YAML and its events. Secret values stay hidden unless `reveal`.
+#[tauri::command]
+pub async fn k8s_object(
+    clusters: State<'_, Clusters>,
+    context: String,
+    kind: ResourceKind,
+    namespace: Option<String>,
+    name: String,
+    reveal: bool,
+) -> CommandResult<ObjectView> {
+    Ok(clusters
+        .object(&context, &kind, namespace.as_deref(), &name, reveal)
+        .await?)
+}
+
 /// Streams any kind as `kubectl get` prints it, then watches it. `namespace: None` lists all
 /// namespaces.
 #[tauri::command]
@@ -312,7 +329,8 @@ pub fn k8s_stream_stop(clusters: State<'_, Clusters>, id: StreamId) {
     clusters.stop_stream(id);
 }
 
-/// Profiles from `~/.aws/config` and `~/.aws/credentials` (names and regions, no secrets).
+/// Profiles from `~/.aws/config` and `~/.aws/credentials` (names and regions, no secrets), the
+/// most recently opened first.
 #[tauri::command]
 pub async fn aws_profiles() -> CommandResult<Vec<ProfileInfo>> {
     Ok(
@@ -333,7 +351,14 @@ pub async fn aws_connect(
     if fresh {
         aws.disconnect(&profile).await;
     }
-    Ok(aws.connect(&profile, &region).await?)
+    let identity = aws.connect(&profile, &region).await?;
+    // Signed in: remember it for the profile list. Failing to save is not worth failing for.
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = winter_core::state::record_aws_profile(&profile, &region) {
+            eprintln!("winter: {e}");
+        }
+    });
+    Ok(identity)
 }
 
 #[tauri::command]
@@ -363,16 +388,136 @@ macro_rules! aws_list_command {
 aws_list_command!(aws_ec2_instances, ec2_instances, Ec2Instance);
 aws_list_command!(aws_eks_clusters, eks_clusters, EksCluster);
 aws_list_command!(aws_load_balancers, load_balancers, LoadBalancer);
+aws_list_command!(aws_vpcs, vpcs, Vpc);
+aws_list_command!(aws_security_groups, security_groups, SecurityGroup);
+aws_list_command!(aws_ebs_volumes, ebs_volumes, EbsVolume);
+aws_list_command!(aws_s3_buckets, s3_buckets, Bucket);
+aws_list_command!(aws_hosted_zones, hosted_zones, HostedZone);
+aws_list_command!(aws_msk_clusters, msk_clusters, MskCluster);
+aws_list_command!(aws_rds_instances, rds_instances, DbInstance);
 
-/// One EC2 instance in detail (with its volumes, status checks and AMI name).
+/// One resource in detail, as sections (see `winter_core::aws::Aws::detail`).
 #[tauri::command]
-pub async fn aws_ec2_instance(
+pub async fn aws_detail(
     aws: State<'_, Aws>,
     profile: String,
     region: String,
+    kind: String,
     id: String,
-) -> CommandResult<Ec2InstanceDetail> {
-    Ok(aws.ec2_instance(&profile, &region, &id).await?)
+) -> CommandResult<Vec<Section>> {
+    Ok(aws.detail(&profile, &region, &kind, &id).await?)
+}
+
+/// Spend this month and last, forecast, daily spend and top services (billed by AWS per call).
+#[tauri::command]
+pub async fn aws_cost_overview(
+    aws: State<'_, Aws>,
+    profile: String,
+) -> CommandResult<CostOverview> {
+    Ok(aws.cost_overview(&profile).await?)
+}
+
+/// Signs in to GitHub with a token from the Keychain, the environment or the GitHub CLI; null
+/// when none is found. `fresh` looks again even when already signed in.
+#[tauri::command]
+pub async fn github_connect(
+    github: State<'_, GitHub>,
+    fresh: bool,
+) -> CommandResult<Option<Account>> {
+    Ok(github.connect(fresh).await?)
+}
+
+/// Checks a personal access token and saves it in the Keychain.
+#[tauri::command]
+pub async fn github_sign_in(github: State<'_, GitHub>, token: String) -> CommandResult<Account> {
+    Ok(github.sign_in(&token).await?)
+}
+
+/// Saves the credential git uses for github.com in winter's Keychain item and signs in with it.
+#[tauri::command]
+pub async fn github_sign_in_with_git(github: State<'_, GitHub>) -> CommandResult<Account> {
+    Ok(github.sign_in_with_git().await?)
+}
+
+#[tauri::command]
+pub async fn github_sign_out(github: State<'_, GitHub>) -> CommandResult<()> {
+    Ok(github.sign_out().await?)
+}
+
+#[tauri::command]
+pub async fn github_repos(
+    github: State<'_, GitHub>,
+    on_page: Channel<Vec<Repo>>,
+) -> CommandResult<usize> {
+    Ok(github.repos(forward(&on_page)).await?)
+}
+
+/// One repository; also remembers it as recently opened.
+#[tauri::command]
+pub async fn github_repo(github: State<'_, GitHub>, repo: String) -> CommandResult<Repo> {
+    let found = github.repo(&repo).await?;
+    let name = found.name.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = winter_core::state::record_github_repo(&name) {
+            eprintln!("winter: {e}");
+        }
+    });
+    Ok(found)
+}
+
+#[tauri::command]
+pub async fn github_workflows(
+    github: State<'_, GitHub>,
+    repo: String,
+) -> CommandResult<Vec<Workflow>> {
+    Ok(github.workflows(&repo).await?)
+}
+
+#[tauri::command]
+pub async fn github_runs(
+    github: State<'_, GitHub>,
+    repo: String,
+    workflow: Option<u64>,
+) -> CommandResult<RunsPage> {
+    Ok(github.runs(&repo, workflow).await?)
+}
+
+#[tauri::command]
+pub async fn github_run(github: State<'_, GitHub>, repo: String, id: u64) -> CommandResult<Run> {
+    Ok(github.run(&repo, id).await?)
+}
+
+#[tauri::command]
+pub async fn github_jobs(
+    github: State<'_, GitHub>,
+    repo: String,
+    run: u64,
+) -> CommandResult<Vec<Job>> {
+    Ok(github.jobs(&repo, run).await?)
+}
+
+#[tauri::command]
+pub async fn github_job_log(
+    github: State<'_, GitHub>,
+    repo: String,
+    job: u64,
+) -> CommandResult<String> {
+    Ok(github.job_log(&repo, job).await?)
+}
+
+/// Opens a github.com page in the default browser. Other URLs are refused.
+#[tauri::command]
+pub fn open_github_url(url: String) -> CommandResult<()> {
+    let allowed = url.starts_with("https://github.com/")
+        && !url.chars().any(|c| c.is_whitespace() || c.is_control());
+    if !allowed {
+        return Err(winter_core::Error::GitHub(format!("not a github.com URL: {url}")).into());
+    }
+    std::process::Command::new("/usr/bin/open")
+        .arg(&url)
+        .spawn()
+        .map_err(|e| CommandError::internal(&e))?;
+    Ok(())
 }
 
 /// Font and colours of Terminal.app's default profile, if any.

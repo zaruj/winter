@@ -23,6 +23,12 @@ pub enum Error {
     #[error("{0}")]
     Aws(String),
 
+    #[error("{0}")]
+    GitHub(String),
+
+    #[error("cannot save state: {0}")]
+    State(String),
+
     #[error("terminal: {0}")]
     Terminal(String),
 

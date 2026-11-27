@@ -10,6 +10,10 @@ export interface ProfileInfo {
   auth: string;
   /** Named by `AWS_PROFILE` (or `default` when unset). */
   current: boolean;
+  /** Last opened in winter, ms since the epoch (from ~/.config/winter/state.json). */
+  lastUsed: number | null;
+  /** Region it was last opened in. */
+  lastRegion: string | null;
 }
 
 export interface Identity {
@@ -56,6 +60,91 @@ export interface LoadBalancer {
   vpc: string | null;
   zones: string[];
   created: string | null;
+  /** ELBv2 only. */
+  arn: string | null;
+}
+
+export interface Vpc {
+  id: string;
+  /** The `Name` tag; empty when untagged. */
+  name: string;
+  state: string;
+  /** IPv4 blocks, the primary one first. */
+  cidrs: string[];
+  ipv6Cidrs: string[];
+  isDefault: boolean;
+  tenancy: string | null;
+  owner: string | null;
+}
+
+export interface SecurityGroup {
+  id: string;
+  name: string;
+  description: string | null;
+  vpc: string | null;
+  inbound: number;
+  outbound: number;
+}
+
+export interface EbsVolume {
+  id: string;
+  /** The `Name` tag; empty when untagged. */
+  name: string;
+  state: string;
+  sizeGib: number | null;
+  type: string | null;
+  iops: number | null;
+  throughput: number | null;
+  encrypted: boolean;
+  zone: string | null;
+  instance: string | null;
+  device: string | null;
+  created: string | null;
+}
+
+export interface Bucket {
+  name: string;
+  region: string | null;
+  created: string | null;
+}
+
+export interface HostedZone {
+  id: string;
+  name: string;
+  private: boolean;
+  records: number | null;
+  comment: string | null;
+}
+
+export interface MskCluster {
+  name: string;
+  arn: string | null;
+  /** `PROVISIONED` or `SERVERLESS`. */
+  type: string;
+  state: string;
+  kafkaVersion: string | null;
+  brokers: number | null;
+  instanceType: string | null;
+  created: string | null;
+}
+
+export interface DbInstance {
+  /** The DB instance identifier. */
+  name: string;
+  engine: string | null;
+  version: string | null;
+  class: string | null;
+  status: string;
+  /** `host:port`. */
+  endpoint: string | null;
+  multiAz: boolean;
+  storageGib: number | null;
+  storageType: string | null;
+  zone: string | null;
+  /** Aurora cluster it belongs to. */
+  cluster: string | null;
+  public: boolean;
+  created: string | null;
 }
 
 /** Used when a profile names no region (matches the Rust side). */
@@ -81,17 +170,32 @@ export function listRegions(
   return invoke("aws_regions", { profile, region });
 }
 
+/** Resources the account page lists, by service. */
 export interface AwsKinds {
   ec2: Ec2Instance;
   eks: EksCluster;
+  s3: Bucket;
+  ebs: EbsVolume;
+  rds: DbInstance;
+  msk: MskCluster;
+  vpc: Vpc;
+  sg: SecurityGroup;
   elb: LoadBalancer;
+  route53: HostedZone;
 }
 export type AwsKind = keyof AwsKinds;
 
 const COMMANDS: Record<AwsKind, string> = {
   ec2: "aws_ec2_instances",
   eks: "aws_eks_clusters",
+  s3: "aws_s3_buckets",
+  ebs: "aws_ebs_volumes",
+  rds: "aws_rds_instances",
+  msk: "aws_msk_clusters",
+  vpc: "aws_vpcs",
+  sg: "aws_security_groups",
   elb: "aws_load_balancers",
+  route53: "aws_hosted_zones",
 };
 
 /** Streams a resource list page by page; resolves with the total. */
@@ -108,51 +212,47 @@ export function streamAws<K extends AwsKind>(
   });
 }
 
-export interface Ec2InstanceDetail extends Ec2Instance {
-  ami: string | null;
-  amiName: string | null;
-  subnet: string | null;
-  privateDns: string | null;
-  publicDns: string | null;
-  securityGroups: { id: string; name: string }[];
-  iamProfile: string | null;
-  rootDevice: string | null;
-  rootDeviceType: string | null;
-  volumes: {
-    device: string;
-    id: string;
-    sizeGib: number | null;
-    type: string | null;
-    iops: number | null;
-    encrypted: boolean | null;
-    deleteOnTermination: boolean | null;
-  }[];
-  interfaces: {
-    id: string;
-    privateIp: string | null;
-    publicIp: string | null;
-    subnet: string | null;
-    mac: string | null;
-  }[];
-  tags: [string, string][];
-  monitoring: string | null;
-  tenancy: string | null;
-  ebsOptimized: boolean | null;
-  stateReason: string | null;
-  cpuCores: number | null;
-  threadsPerCore: number | null;
-  /** `required` means IMDSv2 only. */
-  imdsTokens: string | null;
-  virtualization: string | null;
-  terminationProtection: boolean | null;
-  systemStatus: string | null;
-  instanceStatus: string | null;
+
+export interface CostOverview {
+  currency: string;
+  /** `YYYY-MM-DD`. */
+  monthStart: string;
+  /** Today in UTC, `YYYY-MM-DD`. */
+  today: string;
+  monthToDate: number;
+  /** Last month up to the same day of the month. */
+  lastMonthToDate: number;
+  lastMonth: number;
+  /** Month-end estimate; null when Cost Explorer cannot forecast yet. */
+  forecast: number | null;
+  /** From the start of last month to today. */
+  daily: { date: string; amount: number; estimated: boolean }[];
+  /** Most expensive this month first. */
+  services: { name: string; thisMonth: number; lastMonth: number }[];
 }
 
-export function getEc2Instance(
+/** Cost Explorer bills each call (three requests), so call it only when asked. */
+export function getCostOverview(profile: string): Promise<CostOverview> {
+  return invoke("aws_cost_overview", { profile });
+}
+
+/** A details view: titled facts, tables and tags (rendered by Sections.svelte). */
+export interface DetailSection {
+  title: string;
+  facts: [string, string][];
+  table: { columns: string[]; rows: string[][] } | null;
+  chips: [string, string][];
+}
+
+/**
+ * One resource in detail. `id` identifies it in its list (see `detailId` in Columns.svelte);
+ * for S3, `region` is the bucket's.
+ */
+export function getDetail(
   profile: string,
   region: string,
+  kind: AwsKind,
   id: string,
-): Promise<Ec2InstanceDetail> {
-  return invoke("aws_ec2_instance", { profile, region, id });
+): Promise<DetailSection[]> {
+  return invoke("aws_detail", { profile, region, kind, id });
 }

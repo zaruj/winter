@@ -1,10 +1,14 @@
-//! AWS: profiles from the shared config files (as the AWS CLI reads them), and paged listing of
-//! EC2 instances, EKS clusters and load balancers.
+//! AWS: profiles from the shared config files (as the AWS CLI reads them), paged listing of EC2
+//! instances, EKS clusters, load balancers, VPCs, security groups, EBS volumes, S3 buckets,
+//! Route 53 hosted zones, MSK clusters and RDS databases, and a cost overview.
 //!
 //! Credentials come from the SDK's default chain for the chosen profile, so static keys, SSO,
 //! `credential_process` and assumed roles all work as they do for the CLI. Lists are fetched page
 //! by page and handed to a callback as each page arrives.
 
+mod cost;
+mod detail;
+mod inventory;
 mod profiles;
 mod resources;
 
@@ -19,6 +23,9 @@ use futures::future::join_all;
 use serde::Serialize;
 use tokio::sync::{Mutex, OnceCell};
 
+pub use cost::{CostOverview, DailyCost, ServiceCost};
+pub use detail::{Section, Table};
+pub use inventory::{Bucket, DbInstance, EbsVolume, HostedZone, MskCluster, SecurityGroup, Vpc};
 pub use profiles::{ProfileInfo, list_profiles};
 pub use resources::{
     Ec2Instance, Ec2InstanceDetail, Ec2Interface, Ec2Volume, EksCluster, LoadBalancer,
@@ -36,6 +43,26 @@ const OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Used when a profile names no region.
 pub const FALLBACK_REGION: &str = "us-east-1";
+
+/// Cost Explorer answers in this region only.
+const COST_REGION: &str = "us-east-1";
+
+/// Sends each page of a paginator to `on_page`, mapped by `|page| items`; evaluates to the total.
+macro_rules! paged {
+    ($pages:expr, |$page:ident| $items:expr, $on_page:ident) => {{
+        let mut pages = $pages;
+        let mut total = 0;
+        while let Some($page) = pages.next().await {
+            let $page = $page.map_err(aws_error)?;
+            let items: Vec<_> = $items;
+            total += items.len();
+            if $on_page(items).is_break() {
+                break;
+            }
+        }
+        Ok(total)
+    }};
+}
 
 /// Who the credentials belong to (`aws sts get-caller-identity`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -284,6 +311,146 @@ impl Aws {
             }
         }
         Ok(total)
+    }
+
+    /// VPCs, like `aws ec2 describe-vpcs`.
+    pub async fn vpcs(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<Vpc>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let ec2 = aws_sdk_ec2::Client::new(&self.config(profile, region).await);
+        paged!(
+            ec2.describe_vpcs()
+                .max_results(PAGE_SIZE)
+                .into_paginator()
+                .send(),
+            |page| page.vpcs().iter().map(Vpc::from).collect(),
+            on_page
+        )
+    }
+
+    /// Security groups, with their rule counts.
+    pub async fn security_groups(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<SecurityGroup>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let ec2 = aws_sdk_ec2::Client::new(&self.config(profile, region).await);
+        paged!(
+            ec2.describe_security_groups()
+                .max_results(PAGE_SIZE)
+                .into_paginator()
+                .send(),
+            |page| page
+                .security_groups()
+                .iter()
+                .map(SecurityGroup::from)
+                .collect(),
+            on_page
+        )
+    }
+
+    /// EBS volumes, like `aws ec2 describe-volumes`.
+    pub async fn ebs_volumes(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<EbsVolume>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let ec2 = aws_sdk_ec2::Client::new(&self.config(profile, region).await);
+        paged!(
+            ec2.describe_volumes()
+                .max_results(PAGE_SIZE)
+                .into_paginator()
+                .send(),
+            |page| page.volumes().iter().map(EbsVolume::from).collect(),
+            on_page
+        )
+    }
+
+    /// Every S3 bucket of the account, whatever its region (S3 lists them all from any region).
+    pub async fn s3_buckets(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<Bucket>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let s3 = aws_sdk_s3::Client::new(&self.config(profile, region).await);
+        paged!(
+            s3.list_buckets().max_buckets(1000).into_paginator().send(),
+            |page| page.buckets().iter().map(Bucket::from).collect(),
+            on_page
+        )
+    }
+
+    /// Route 53 hosted zones (global, like S3).
+    pub async fn hosted_zones(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<HostedZone>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let route53 = aws_sdk_route53::Client::new(&self.config(profile, region).await);
+        paged!(
+            route53
+                .list_hosted_zones()
+                .max_items(PAGE_SIZE)
+                .into_paginator()
+                .send(),
+            |page| page.hosted_zones().iter().map(HostedZone::from).collect(),
+            on_page
+        )
+    }
+
+    /// MSK (Kafka) clusters, provisioned and serverless.
+    pub async fn msk_clusters(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<MskCluster>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let kafka = aws_sdk_kafka::Client::new(&self.config(profile, region).await);
+        paged!(
+            kafka
+                .list_clusters_v2()
+                .max_results(PAGE_SIZE)
+                .into_paginator()
+                .send(),
+            |page| page
+                .cluster_info_list()
+                .iter()
+                .map(MskCluster::from)
+                .collect(),
+            on_page
+        )
+    }
+
+    /// RDS database instances, Aurora ones included.
+    pub async fn rds_instances(
+        &self,
+        profile: &str,
+        region: &str,
+        mut on_page: impl FnMut(Vec<DbInstance>) -> ControlFlow<()>,
+    ) -> Result<usize> {
+        let rds = aws_sdk_rds::Client::new(&self.config(profile, region).await);
+        paged!(
+            rds.describe_db_instances()
+                .max_records(PAGE_SIZE)
+                .into_paginator()
+                .send(),
+            |page| page.db_instances().iter().map(DbInstance::from).collect(),
+            on_page
+        )
+    }
+
+    /// This month's and last month's spend, forecast, daily spend and top services. Each call
+    /// makes three Cost Explorer requests, which AWS bills for.
+    pub async fn cost_overview(&self, profile: &str) -> Result<CostOverview> {
+        let ce = aws_sdk_costexplorer::Client::new(&self.config(profile, COST_REGION).await);
+        cost::overview(&ce, cost::Period::new(cost::Day::today())).await
     }
 
     /// Loads the SDK configuration once per profile and region.

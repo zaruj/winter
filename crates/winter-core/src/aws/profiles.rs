@@ -1,6 +1,7 @@
 //! Profile names and regions from `~/.aws/config` and `~/.aws/credentials` (or the files named by
 //! `AWS_CONFIG_FILE` and `AWS_SHARED_CREDENTIALS_FILE`). Only names and settings are read here;
-//! secret keys are never returned.
+//! secret keys are never returned. Profiles opened in winter come first, most recent first (see
+//! [`crate::state`]).
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -8,6 +9,7 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 use crate::Result;
+use crate::state::RecentProfile;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -18,9 +20,14 @@ pub struct ProfileInfo {
     pub auth: String,
     /// `AWS_PROFILE` names it, or it is `default` when that is unset.
     pub current: bool,
+    /// When it was last opened in winter, in milliseconds since the Unix epoch.
+    pub last_used: Option<u64>,
+    /// The region it was last opened in.
+    pub last_region: Option<String>,
 }
 
-/// Every profile in the shared config and credentials files, `default` first.
+/// Every profile in the shared config and credentials files: the ones opened most recently
+/// first, then the rest with `default` first.
 pub fn list_profiles() -> Result<Vec<ProfileInfo>> {
     let read = |path: Option<PathBuf>| {
         path.and_then(|p| std::fs::read_to_string(p).ok())
@@ -32,7 +39,21 @@ pub fn list_profiles() -> Result<Vec<ProfileInfo>> {
         .ok()
         .filter(|p| !p.is_empty())
         .unwrap_or_else(|| "default".into());
-    Ok(merge(&config, &credentials, &current))
+    let mut profiles = merge(&config, &credentials, &current);
+    order_by_recent(&mut profiles, &crate::state::load().aws.recent);
+    Ok(profiles)
+}
+
+/// Notes when each profile was last used and moves those to the front, newest first. The sort
+/// is stable, so profiles never used keep their order.
+fn order_by_recent(profiles: &mut [ProfileInfo], recent: &[RecentProfile]) {
+    for p in profiles.iter_mut() {
+        if let Some(r) = recent.iter().find(|r| r.profile == p.name) {
+            p.last_used = Some(r.used_at);
+            p.last_region = Some(r.region.clone());
+        }
+    }
+    profiles.sort_by_key(|p| std::cmp::Reverse(p.last_used));
 }
 
 fn env_path(var: &str, file: &str) -> Option<PathBuf> {
@@ -71,6 +92,8 @@ fn merge(config: &str, credentials: &str, current: &str) -> Vec<ProfileInfo> {
             auth: auth(&keys).into(),
             region: keys.get("region").cloned(),
             current: name == current,
+            last_used: None,
+            last_region: None,
             name,
         })
         .collect();
@@ -183,6 +206,29 @@ aws_secret_access_key = secret2
     fn never_returns_secrets() {
         let json = serde_json::to_string(&merge(CONFIG, CREDENTIALS, "default")).unwrap();
         assert!(!json.contains("secret") && !json.contains("AKIA"));
+    }
+
+    #[test]
+    fn recently_used_come_first() {
+        let mut list = merge(CONFIG, CREDENTIALS, "default");
+        let used = |profile: &str, region: &str, used_at| RecentProfile {
+            profile: profile.into(),
+            region: region.into(),
+            used_at,
+        };
+        let recent = [
+            used("work", "us-west-2", 20),
+            used("gone", "us-east-1", 15),
+            used("ci", "eu-west-1", 10),
+        ];
+        order_by_recent(&mut list, &recent);
+        let names: Vec<_> = list.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["work", "ci", "default", "admin"]);
+        assert_eq!(
+            (list[0].last_used, list[0].last_region.as_deref()),
+            (Some(20), Some("us-west-2"))
+        );
+        assert_eq!(list[2].last_used, None);
     }
 
     #[test]

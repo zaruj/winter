@@ -5,6 +5,7 @@
 
 mod discovery;
 mod nodes;
+mod object;
 mod resources;
 mod streams;
 mod table;
@@ -29,6 +30,7 @@ pub use k8s_openapi::api::core::v1::{
 };
 pub use k8s_openapi::api::networking::v1::Ingress;
 pub use nodes::{NodeAddress, NodeCondition, NodeDetail, NodeSummary, NodeTaint, NodeUsage};
+pub use object::{ObjectEvent, ObjectView};
 pub use resources::{
     ConfigMapSummary, DeploymentSummary, IngressSummary, NamespaceSummary, PodSummary, PvcSummary,
     SecretSummary, ServiceSummary,

@@ -31,30 +31,38 @@
 		compact?: boolean;
 	} = $props();
 
+	/** Measured by the table; the Namespace column shows from its `xl` width. */
+	let width = $state(0);
+	const namespaceColumn = $derived(width >= 1100);
+
 	const columns = $derived<Column<PodSummary>[]>(compact ? [
 		{ header: 'Name', class: 'truncate', cell: podNameWithNamespace },
 		{ header: 'Ready', class: 'w-11', text: (p) => `${p.ready}/${p.containers}` },
 		{ header: 'Status', class: 'w-28 truncate', cell: podStatus },
 		{ header: ' ', class: 'w-16 text-right', cell: podActions }
 	] : [
+		// Fixed widths: the name takes what is left and is cut short, so the table never scrolls
+		// sideways. When the Namespace column does not fit, the namespace prefixes the name.
 		...(showNamespace
-			? [{ header: 'Namespace', class: 'text-muted-foreground', hide: 'md', text: (p) => p.namespace } as Column<PodSummary>]
+			? [{ header: 'Namespace', class: 'w-36 truncate text-muted-foreground', hide: 'xl', text: (p) => p.namespace } as Column<PodSummary>]
 			: []),
-		{ header: 'Name', cell: podName },
-		{ header: 'Ready', text: (p) => `${p.ready}/${p.containers}` },
-		{ header: 'Status', cell: podStatus },
-		{ header: 'Restarts', hide: 'sm', cell: podRestarts },
-		{ header: 'IP', class: 'text-muted-foreground tabular-nums', hide: 'md', text: (p) => p.ip ?? '-' },
+		{ header: 'Name', class: 'truncate', cell: podName },
+		{ header: 'Ready', class: 'w-14', text: (p) => `${p.ready}/${p.containers}` },
+		{ header: 'Status', class: 'w-28 truncate', cell: podStatus },
+		{ header: 'Restarts', class: 'w-20', hide: 'sm', cell: podRestarts },
+		{ header: 'IP', class: 'w-28 truncate text-muted-foreground tabular-nums', hide: 'md', text: (p) => p.ip ?? '-' },
 		...(showNode
-			? [{ header: 'Node', class: 'text-muted-foreground', hide: 'lg', text: (p) => p.node ?? '-' } as Column<PodSummary>]
+			? [{ header: 'Node', class: 'w-40 truncate text-muted-foreground', hide: 'xl', text: (p) => p.node ?? '-' } as Column<PodSummary>]
 			: []),
-		{ header: 'Age', class: 'text-muted-foreground text-right', hide: 'sm', text: (p) => age(p.created, now) },
+		{ header: 'Age', class: 'w-14 text-muted-foreground text-right', hide: 'sm', text: (p) => age(p.created, now) },
 		{ header: ' ', class: 'w-16 text-right', cell: podActions }
 	]);
 </script>
 
 {#snippet podName(p: PodSummary)}
-	<div class="truncate font-medium {compact ? '' : 'max-w-[50vw] md:max-w-md'}" title={p.name}>{p.name}</div>
+	<div class="truncate font-medium" title="{p.namespace}/{p.name}">
+		{#if showNamespace && !namespaceColumn}<span class="text-muted-foreground font-normal">{p.namespace}/</span>{/if}{p.name}
+	</div>
 {/snippet}
 
 {#snippet podNameWithNamespace(p: PodSummary)}
@@ -92,5 +100,6 @@
 	key={itemKey}
 	bind:cursor
 	onActivate={(p) => openLogs(context, p)}
-	fixed={compact}
+	fixed
+	bind:width
 />

@@ -1,8 +1,7 @@
 <script lang="ts">
 	import Kbd from '#lib/components/Kbd.svelte';
 	import { moveCursor } from '#lib/keys.svelte.js';
-	import type { AwsKind } from './api.js';
-	import { suggest, suggestRegions, type Suggestion } from './services.js';
+		import { suggest, suggestRegions, type Suggestion, type View } from './services.js';
 
 	// k9s-style `:` for AWS: a service by name (`ec2`, `eks`, `alb`), optionally followed by a
 	// region (`ec2 us-east-1`); or just a region to switch to.
@@ -16,7 +15,7 @@
 		/** The region shown now. */
 		current: string;
 		/** `kind` null: only switch region. `region` null: stay in this region. */
-		onRun: (kind: AwsKind | null, region: string | null) => void;
+		onRun: (kind: View | null, region: string | null) => void;
 		onClose: () => void;
 	} = $props();
 
@@ -84,7 +83,7 @@
 			bind:value={input}
 			{onkeydown}
 			onblur={onClose}
-			placeholder="ec2, eks, alb us-east-1, ap-southeast-1, …"
+			placeholder="ec2, rds, s3, sg, cost, alb us-east-1, ap-southeast-1, …"
 			aria-label="Service"
 			spellcheck="false"
 			autocomplete="off"

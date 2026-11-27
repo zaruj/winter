@@ -6,10 +6,15 @@ edition.workspace = true
 
 [dependencies]
 aws-config.workspace = true
+aws-sdk-costexplorer.workspace = true
 aws-sdk-ec2.workspace = true
 aws-sdk-eks.workspace = true
 aws-sdk-elasticloadbalancing.workspace = true
 aws-sdk-elasticloadbalancingv2.workspace = true
+aws-sdk-kafka.workspace = true
+aws-sdk-rds.workspace = true
+aws-sdk-route53.workspace = true
+aws-sdk-s3.workspace = true
 aws-sdk-sts.workspace = true
 futures.workspace = true
 http.workspace = true
@@ -17,11 +22,16 @@ k8s-openapi.workspace = true
 kube.workspace = true
 plist.workspace = true
 portable-pty.workspace = true
+reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+serde_yaml_ng.workspace = true
 thiserror.workspace = true
-tokio = { workspace = true, features = ["sync", "time", "rt", "io-util"] }
+tokio = { workspace = true, features = ["sync", "time", "rt", "io-util", "process"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework.workspace = true
 
 [dev-dependencies]
 k8s-openapi.workspace = true

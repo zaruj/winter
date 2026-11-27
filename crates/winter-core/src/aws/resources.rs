@@ -55,13 +55,15 @@ pub struct LoadBalancer {
     pub vpc: Option<String>,
     pub zones: Vec<String>,
     pub created: Option<String>,
+    /// ELBv2 only; classic load balancers are known by name.
+    pub arn: Option<String>,
 }
 
-fn time(t: Option<&DateTime>) -> Option<String> {
+pub(super) fn time(t: Option<&DateTime>) -> Option<String> {
     t.and_then(|t| t.fmt(DateTimeFormat::DateTime).ok())
 }
 
-fn owned(s: Option<&str>) -> Option<String> {
+pub(super) fn owned(s: Option<&str>) -> Option<String> {
     s.map(str::to_owned)
 }
 
@@ -153,6 +155,7 @@ impl From<&aws_sdk_elasticloadbalancingv2::types::LoadBalancer> for LoadBalancer
                 t.fmt(aws_sdk_elasticloadbalancingv2::primitives::DateTimeFormat::DateTime)
                     .ok()
             }),
+            arn: owned(lb.load_balancer_arn()),
         }
     }
 }
@@ -171,6 +174,7 @@ impl From<&aws_sdk_elasticloadbalancing::types::LoadBalancerDescription> for Loa
                 t.fmt(aws_sdk_elasticloadbalancing::primitives::DateTimeFormat::DateTime)
                     .ok()
             }),
+            arn: None,
         }
     }
 }

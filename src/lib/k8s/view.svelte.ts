@@ -48,6 +48,10 @@ export class ClusterView {
 	node = $state<string | null>(null);
 	/** Selected pod in that panel. */
 	nodePod = $state(0);
+	/** Details (`d`) or YAML (`y`) of the selected row, beside the list. */
+	panel = $state<'detail' | 'yaml' | null>(null);
+	/** Show Secret values in that panel. */
+	reveal = $state(false);
 	cursors = $state(Object.fromEntries(TABS.map((k) => [k, 0])) as Record<Kind, number>);
 }
 

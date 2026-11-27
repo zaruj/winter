@@ -33,3 +33,26 @@ export const balancerTone = (s: string | null): Tone =>
     : s === "provisioning"
       ? "pending"
       : "bad";
+
+/** EBS: attached is in use; `available` means unattached. */
+export const volumeTone = (s: string): Tone =>
+  s === "in-use"
+    ? "ok"
+    : s === "available"
+      ? "off"
+      : s === "error"
+        ? "bad"
+        : "pending";
+
+export const vpcTone = (s: string): Tone => (s === "available" ? "ok" : "pending");
+
+const DB_BAD = ["failed", "storage-full", "inaccessible-encryption-credentials", "restore-error"];
+
+export const dbTone = (s: string): Tone =>
+  s === "available"
+    ? "ok"
+    : s === "stopped" || s === "deleting"
+      ? "off"
+      : DB_BAD.includes(s) || s.startsWith("incompatible")
+        ? "bad"
+        : "pending";

@@ -18,11 +18,22 @@ Desktop app: Rust core + Tauri v2 GUI (SvelteKit, Tailwind CSS, shadcn-svelte).
 - **Terminal**: your login shell in tabs, with the font and colours of Terminal.app's default
   profile. Shells keep running when you leave the page.
 - **AWS**: pick a profile from `~/.aws` (access keys, SSO, assumed roles and credential
-  processes all work, as with the AWS CLI) and a region, then list EC2 instances, EKS clusters
-  and load balancers (application, network, gateway and classic). Press `:` to jump to a
-  service or region by name, and `Enter` on an instance for its details (status checks, AMI,
-  network, security groups, volumes, tags) on one screen. Read-only.
-- SSH, Azure, Google Cloud, Cloudflare, Akamai: not built yet.
+  processes all work, as with the AWS CLI) and a region, then list EC2 instances, EKS clusters,
+  S3 buckets, EBS volumes, RDS databases, MSK clusters, VPCs, security groups, load balancers
+  (application, network, gateway and classic) and Route 53 zones. Press `:` to jump to a
+  service or region by name, and `d` (or `Enter`) for the selected resource's details beside
+  the list: an instance's status checks, AMI and volumes, a security group's rules, a load
+  balancer's listeners and target health, a VPC's subnets and NAT gateways, a zone's records,
+  MSK bootstrap brokers, RDS and EKS settings, S3 versioning, encryption and public access. **Cost overview** shows this month
+  against last, the month-end forecast, daily spend and the top services; it calls Cost
+  Explorer (about USD 0.03 a load, billed by AWS), so it loads only when opened. Profiles
+  opened recently come first. Read-only.
+- **GitHub Actions**: sign in with a token (from the GitHub CLI, `GH_TOKEN`, or one you paste,
+  kept in the macOS Keychain), pick a repository, then follow its workflow runs, each run's
+  jobs and steps, and job logs. Runs in progress update by themselves. Read-only.
+- State (recent AWS profiles and GitHub repositories) is kept in `~/.config/winter/state.json`;
+  no secrets go there.
+- SSH, Azure, Google Cloud, Cloudflare, Akamai, GitLab, Jenkins, Argo CD: not built yet.
 
 ## Keyboard
 
@@ -31,13 +42,14 @@ Press `?` in the app for this list.
 | Where | Keys |
 | --- | --- |
 | Everywhere | `Esc` back (outside the terminal), `⌘[` back, `?` help |
-| Home | `k` Kubernetes, `t` Terminal, `a` AWS, arrows + `Enter` |
+| Home | `k` Kubernetes, `t` Terminal, `a` AWS, `g` GitHub, `/` search, arrows + `Enter` |
 | Clusters | type to search, `↑` `↓` or `Ctrl+K` `Ctrl+J` move, `Enter` open, `Esc` clear search |
-| Cluster | `:` any resource (`:sts`, `:crd`, `:po argocd`, `:svc all`), `j` `k` move, `g` `G` top/bottom, `1`–`9` tabs (`9` Nodes), `[` `]` previous/next in the sidebar, `Space` tick namespace, `Enter` open namespace or node details, `0` all namespaces, `l` pod logs (docked below), `L` show and focus / hide logs and shells, `⌘J` switch between list and dock, `s` pod shell (docked below), `/` filter, `r` refresh |
+| Cluster | `:` any resource (`:sts`, `:crd`, `:po argocd`, `:svc all`), `j` `k` move, `g` `G` top/bottom, `1`–`9` tabs (`9` Nodes), `[` `]` previous/next in the sidebar, `Space` tick namespace, `Enter` open namespace or node details, `d` details / `y` YAML of the selected item beside the list (`J` `K` scroll, `x` Secret values, `Esc` close), `0` all namespaces, `l` pod logs (docked below), `L` show and focus / hide logs and shells, `⌘J` switch between list and dock, `s` pod shell (docked below), `/` filter, `r` refresh |
 | Node details | `j` `k` move in the node's pods (paged to fit), `l` or `Enter` logs, `s` shell, `r` refresh, `Esc` back to the nodes |
 | Shell (docked) | keys go to the shell, `⌘J` back to the list, `⌘W` or `exit` closes the tab |
 | Logs (focused) | `j` `k` scroll, `u` `d` page, `g` `G` top/bottom, `[` `]` switch log, `x` or `⌘W` close, `s` shell, `Esc` back to the list |
-| AWS | type to search profiles, `Enter` open, `:` service or region (`:eks`, `:alb us-east-1`), `Enter` instance details, `1`–`3` EC2 / EKS / load balancers, `[` `]` switch, `j` `k` move, `/` filter, `r` refresh |
+| AWS | type to search profiles, `Enter` open, `:` service or region (`:eks`, `:alb us-east-1`), `d` or `Enter` details beside the list (`J` `K` scroll), `1`–`9` services, `[` `]` switch, `j` `k` move, `/` filter, `r` refresh (on Cost overview only the cost) |
+| GitHub | type to search repositories (or `owner/name`), `Enter` open, `[` `]` workflows, `Enter` run's jobs and steps, `Enter` on a job its log, `o` open on GitHub, `j` `k` move, `/` filter, `r` refresh |
 | Terminal | `⌘T` new tab, `⌘W` close tab, `⌘1`–`⌘9` switch, `⌘[` leave (`Esc` goes to the shell) |
 
 ## Layout
@@ -46,7 +58,7 @@ Press `?` in the app for this list.
 | --- | --- |
 | `crates/winter-core` | Application logic. Plain Rust, no Tauri dependency. |
 | `src-tauri` | Tauri shell. Commands only forward to `winter-core`. |
-| `src` | Svelte UI: `src/routes/{k8s,terminal}`, shared code in `src/lib`. Shortcuts: `src/lib/keys.svelte.ts`. |
+| `src` | Svelte UI: `src/routes/{k8s,terminal,aws,github}`, shared code in `src/lib`. Shortcuts: `src/lib/keys.svelte.ts`. |
 
 To add a feature: write it in `winter-core`, expose it in `src-tauri/src/commands.rs`, register it in
 `src-tauri/src/lib.rs`, then add a typed wrapper (e.g. `src/lib/k8s/api.ts`).
@@ -73,6 +85,9 @@ WINTER_TEST_CONTEXT=<context> cargo test -p winter-core --test live_cluster -- -
                                    # with WINTER_TEST_POD=<ns>/<pod> also runs `echo` in that pod
 WINTER_TEST_AWS_PROFILE=<profile> cargo test -p winter-core --test live_aws -- --ignored
                                    # test against a real AWS account (read-only calls)
+                                   # WINTER_TEST_AWS_COST=1 also loads the cost overview (billed)
+cargo test -p winter-core --test live_github -- --ignored
+                                   # reads a public repository's Actions, no token needed
 cargo clippy --workspace --all-targets
 npx shadcn-svelte@latest add dialog   # add a UI component
 ```
