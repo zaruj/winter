@@ -1,0 +1,30 @@
+[package]
+name = "winter-core"
+description = "Application logic for winter, independent of any GUI"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+aws-config.workspace = true
+aws-sdk-ec2.workspace = true
+aws-sdk-eks.workspace = true
+aws-sdk-elasticloadbalancing.workspace = true
+aws-sdk-elasticloadbalancingv2.workspace = true
+aws-sdk-sts.workspace = true
+futures.workspace = true
+http.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+plist.workspace = true
+portable-pty.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "rt", "io-util"] }
+
+[dev-dependencies]
+k8s-openapi.workspace = true
+kube.workspace = true
+serde.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

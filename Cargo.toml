@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "src-tauri"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+[workspace.dependencies]
+winter-core = { path = "crates/winter-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = "1"
+futures = "0.3"
+http = "1"
+plist = "1.10"
+kube = { version = "5.2", default-features = false, features = ["client", "rustls-tls", "ring", "ws"] }
+portable-pty = "0.9"
+k8s-openapi = { version = "0.29", features = ["latest"] }
+aws-config = { version = "1.13.4", features = ["behavior-version-latest"] }
+aws-sdk-ec2 = "1.284.0"
+aws-sdk-eks = "1.164.0"
+aws-sdk-elasticloadbalancing = "1.125.0"
+aws-sdk-elasticloadbalancingv2 = "1.139.0"
+aws-sdk-sts = "1.129.0"
+# Both kube (ring) and the AWS SDK (aws-lc-rs) enable a rustls crypto provider, so rustls cannot
+# pick one by itself; `winter_core::tls::init` installs ring for the whole process.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
